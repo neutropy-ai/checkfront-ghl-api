@@ -22,7 +22,7 @@ module.exports = async (req, res) => {
     if (req.method !== 'POST') return res.status(405).json({ success: false, message: 'Use POST' });
 
     try {
-          const { booking_id, email, phone } = req.body || {};
+          const { booking_id, email, phone } = { ...req.query, ...req.body };
           if (!booking_id && !email && !phone) {
                   return res.status(400).json({ success: false, message: 'Provide booking_id, email, or phone', speech: 'I need your booking ID, email, or phone to look up your booking.' });
           }
