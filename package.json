@@ -1,18 +1,15 @@
 {
-    "name": "checkfront-ghl-api",
-    "version": "1.0.0",
-    "description": "Checkfront booking API for GoHighLevel Voice AI Custom Actions",
-    "main": "api/index.js",
-    "scripts": {
-          "start": "node api/index.js",
-          "dev": "node api/index.js"
-    },
-    "dependencies": {
-          "express": "^4.18.2",
-          "cors": "^2.8.5",
-          "node-fetch": "^2.7.0"
-    },
-    "engines": {
-          "node": ">=18"
-    }
+  "name": "checkfront-ghl-api",
+  "version": "2.0.0",
+  "description": "Checkfront booking API for GoHighLevel Voice AI Custom Actions",
+  "main": "api/index.js",
+  "scripts": {
+    "test": "echo \"No tests yet\" && exit 0"
+  },
+  "dependencies": {
+    "node-fetch": "^2.7.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
 }
