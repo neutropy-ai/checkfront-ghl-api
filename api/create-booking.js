@@ -1,143 +1,195 @@
-const fetch = require('node-fetch');
-
-const CHECKFRONT_DOMAIN = process.env.CHECKFRONT_DOMAIN || 'funkytown.checkfront.com';
-const CHECKFRONT_API_KEY = process.env.CHECKFRONT_API_KEY || '63f16965e59953a8b4e41408e1a4a2fda01f5b62';
-const CHECKFRONT_API_SECRET = process.env.CHECKFRONT_API_SECRET || 'add933b4539b93537600694efc27fd93274730b6f729a3edbbe5a655e0425091';
-
-const credentials = Buffer.from(`${CHECKFRONT_API_KEY}:${CHECKFRONT_API_SECRET}`).toString('base64');
-
-async function checkfrontRequest(endpoint, method = 'GET', body = null) {
-    const url = `https://${CHECKFRONT_DOMAIN}/api/3.0${endpoint}`;
-    const options = { method, headers: { 'Authorization': `Basic ${credentials}`, 'Content-Type': 'application/json', 'Accept': 'application/json' } };
-    if (body) options.body = JSON.stringify(body);
-    const response = await fetch(url, options);
-    return await response.json();
-}
-
-// Find item(s) by name - returns single match or multiple options
-async function findItemsByName(itemName) {
-    const result = await checkfrontRequest('/item');
-    if (!result.items) return { exact: null, matches: [] };
-    
-    const searchName = itemName.toLowerCase().trim();
-    const matches = [];
-    
-    for (const [id, item] of Object.entries(result.items)) {
-        const name = item.name.toLowerCase();
-        if (name === searchName) {
-            return { exact: { id, ...item }, matches: [] };
-        }
-        if (name.includes(searchName) || searchName.includes(name)) {
-            matches.push({ id, ...item });
-        }
-    }
-    
-    if (matches.length === 1) {
-        return { exact: matches[0], matches: [] };
-    }
-    
-    return { exact: null, matches };
-}
+// api/create-booking.js
+const { checkfront, findItemsByName, safeBooking } = require("../lib/checkfront");
+const { guard } = require("../lib/guard");
+const { parseDate } = require("../lib/dates");
 
 module.exports = async (req, res) => {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-    if (req.method === 'OPTIONS') return res.status(200).end();
-    if (req.method !== 'POST') return res.status(405).json({ success: false, speech: 'Sorry, something went wrong. Can you try that again?' });
+  // Handle CORS preflight
+  if (req.method === "OPTIONS") {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, x-internal-token");
+    return res.status(200).end();
+  }
 
-    try {
-        const { item_id, item_name, date, start_date, customer_name, customer_email, customer_phone, quantity = 1 } = { ...req.query, ...req.body };
+  res.setHeader("Access-Control-Allow-Origin", "*");
 
-        // Resolve item_id from item_name if needed
-        let resolvedItemId = item_id;
-        let itemInfo = null;
-        
-        if (!resolvedItemId && item_name) {
-            const { exact, matches } = await findItemsByName(item_name);
-            
-            if (exact) {
-                itemInfo = exact;
-                resolvedItemId = exact.id;
-            } else if (matches.length > 0) {
-                const optionNames = matches.map(m => m.name);
-                let speechOptions;
-                
-                if (optionNames.length === 2) {
-                    speechOptions = `${optionNames[0]} or the ${optionNames[1]}`;
-                } else {
-                    const last = optionNames.pop();
-                    speechOptions = `${optionNames.join(', ')}, or the ${last}`;
-                }
-                
-                return res.status(200).json({
-                    success: false,
-                    multiple_matches: true,
-                    matches: matches.map(m => ({ id: m.id, name: m.name })),
-                    speech: `We have a few options - there's the ${speechOptions}. Which one would you like to book?`
-                });
-            } else {
-                return res.status(400).json({
-                    success: false,
-                    speech: `I'm not seeing anything called ${item_name}. What would you like to book?`
-                });
-            }
-        }
+  // Auth check
+  if (!guard(req, res)) return;
 
-        if (!resolvedItemId) {
-            return res.status(400).json({ success: false, speech: 'What would you like to book today?' });
-        }
-        
-        const bookingDate = date || start_date;
-        if (!bookingDate) {
-            return res.status(400).json({ success: false, speech: 'And what date were you thinking?' });
-        }
-        
-        if (!customer_email && !customer_phone) {
-            return res.status(400).json({ success: false, speech: 'Can I grab your email or phone number to confirm the booking?' });
-        }
+  // Method check
+  if (req.method !== "POST") {
+    return res.status(405).json({
+      ok: false,
+      code: "METHOD_NOT_ALLOWED",
+      speech: "Sorry, something went wrong. Can you try that again?"
+    });
+  }
 
-        const sessionResult = await checkfrontRequest('/booking/session', 'POST', { start_date: bookingDate, end_date: bookingDate, item_id: resolvedItemId, qty: quantity });
-        if (sessionResult.error) {
-            return res.status(400).json({ success: false, speech: `That date's not available unfortunately. Want to try a different date?` });
-        }
+  try {
+    const {
+      item_id,
+      item_name,
+      date,
+      start_date,
+      customer_name,
+      customer_email,
+      customer_phone,
+      quantity = 1
+    } = { ...req.query, ...req.body };
 
-        const sessionId = sessionResult.booking?.session?.id;
-        if (!sessionId) {
-            return res.status(400).json({ success: false, speech: `I had trouble starting that booking. Mind if we try again?` });
-        }
+    // Resolve item_id from item_name if needed
+    let resolvedItemId = item_id;
+    let itemInfo = null;
 
-        const bookingData = {
-            form: {
-                customer_name: customer_name || 'Guest',
-                customer_email: customer_email || '',
-                customer_phone: customer_phone || ''
-            }
-        };
+    if (!resolvedItemId && item_name) {
+      const { exact, matches } = await findItemsByName(item_name);
 
-        const createResult = await checkfrontRequest(`/booking/session/${sessionId}`, 'POST', bookingData);
-        
-        if (createResult.error || !createResult.booking) {
-            return res.status(400).json({ success: false, speech: `Something went wrong with the booking. Can we give it another shot?` });
-        }
-
-        const booking = createResult.booking;
-        const itemName = itemInfo?.name || 'your booking';
-        const confirmationCode = booking.code || booking.booking_id;
-        
-        return res.status(200).json({
-            success: true,
-            booking_id: booking.booking_id || booking.id,
-            booking_code: confirmationCode,
-            item_name: itemName,
-            date: bookingDate,
-            customer_name: customer_name,
-            total: booking.total,
-            speech: `You're all set! I've got you booked for ${itemName} on ${bookingDate}. Your confirmation number is ${confirmationCode}. Is there anything else I can help with?`
+      if (exact) {
+        itemInfo = exact;
+        resolvedItemId = exact.id;
+      } else if (matches.length > 0) {
+        // Multiple matches - ask for clarification
+        const options = matches.slice(0, 3).map(m => m.name).join(", ");
+        return res.status(400).json({
+          ok: false,
+          code: "MULTIPLE_ITEMS_FOUND",
+          matches: matches.slice(0, 5).map(m => ({ id: m.id, name: m.name })),
+          speech: `I found a few options: ${options}. Which one did you mean?`
         });
-
-    } catch (error) {
-        console.error('Booking error:', error);
-        return res.status(500).json({ success: false, speech: `Sorry about that - I ran into an issue. Want to try again?` });
+      } else {
+        return res.status(404).json({
+          ok: false,
+          code: "ITEM_NOT_FOUND",
+          speech: "I couldn't find that service. What would you like to book?"
+        });
+      }
     }
+
+    if (!resolvedItemId) {
+      return res.status(400).json({
+        ok: false,
+        code: "MISSING_ITEM",
+        speech: "What service would you like to book?",
+        fields_needed: ["item_name"]
+      });
+    }
+
+    // Parse and validate date
+    const bookingDate = date || start_date;
+    if (!bookingDate) {
+      return res.status(400).json({
+        ok: false,
+        code: "MISSING_DATE",
+        speech: "What date would you like to book?",
+        fields_needed: ["date"]
+      });
+    }
+
+    const parsedDate = parseDate(bookingDate, process.env.TIMEZONE);
+    if (parsedDate.error) {
+      return res.status(400).json({
+        ok: false,
+        code: "INVALID_DATE",
+        speech: `I didn't catch that date. Could you say it again? For example, "February 15th" or "next Saturday".`
+      });
+    }
+
+    // Validate customer info
+    if (!customer_name) {
+      return res.status(400).json({
+        ok: false,
+        code: "MISSING_CUSTOMER_NAME",
+        speech: "I'll need your name for the booking. What name should I put it under?",
+        fields_needed: ["customer_name"]
+      });
+    }
+
+    if (!customer_email && !customer_phone) {
+      return res.status(400).json({
+        ok: false,
+        code: "MISSING_CONTACT",
+        speech: "I'll need a way to send you the confirmation. What's your email or phone number?",
+        fields_needed: ["customer_email", "customer_phone"]
+      });
+    }
+
+    // Get item details if we don't have them
+    if (!itemInfo) {
+      const itemResult = await checkfront(`/item/${resolvedItemId}`);
+      itemInfo = itemResult?.item;
+    }
+
+    const itemName = itemInfo?.name || "that";
+
+    // Step 1: Create a booking session
+    const sessionResult = await checkfront("/booking/session", {
+      method: "POST",
+      form: {
+        item_id: resolvedItemId,
+        start_date: parsedDate.dateStr,  // YYYYMMDD format
+        end_date: parsedDate.dateStr,
+        qty: quantity
+      }
+    });
+
+    if (!sessionResult?.booking?.session?.id) {
+      // Check if it's an availability issue
+      if (sessionResult?.error || sessionResult?.request?.status === "ERROR") {
+        return res.status(400).json({
+          ok: false,
+          code: "NOT_AVAILABLE",
+          speech: `Unfortunately ${itemName} isn't available on ${parsedDate.formatted}. Would you like to try a different date?`
+        });
+      }
+
+      throw new Error("Failed to create booking session");
+    }
+
+    const sessionId = sessionResult.booking.session.id;
+
+    // Step 2: Set customer details
+    await checkfront("/booking/session/form", {
+      method: "POST",
+      form: {
+        session_id: sessionId,
+        form: JSON.stringify({
+          customer_name: customer_name,
+          customer_email: customer_email || "",
+          customer_phone: customer_phone || ""
+        })
+      }
+    });
+
+    // Step 3: Complete the booking
+    const bookingResult = await checkfront("/booking/create", {
+      method: "POST",
+      form: {
+        session_id: sessionId
+      }
+    });
+
+    if (!bookingResult?.booking) {
+      throw new Error("Booking creation failed");
+    }
+
+    const booking = bookingResult.booking;
+
+    return res.status(200).json({
+      ok: true,
+      booking_id: booking.booking_id || booking.id,
+      code: booking.code,
+      booking: safeBooking(booking),
+      speech: `Great! I've booked ${itemName} for ${customer_name} on ${parsedDate.formatted}. Your confirmation number is ${booking.code}. You'll receive a confirmation email shortly. Is there anything else?`
+    });
+
+  } catch (err) {
+    console.error("create-booking failed:", err.message, err.payload || "");
+
+    return res.status(500).json({
+      ok: false,
+      code: "INTERNAL_ERROR",
+      speech: "I had trouble completing that booking. Would you like to try again?"
+    });
+  }
 };
