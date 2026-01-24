@@ -1,51 +1,132 @@
-const fetch = require('node-fetch');
-
-const CHECKFRONT_DOMAIN = process.env.CHECKFRONT_DOMAIN || 'funkytown.checkfront.com';
-const CHECKFRONT_API_KEY = process.env.CHECKFRONT_API_KEY || '63f16965e59953a8b4e41408e1a4a2fda01f5b62';
-const CHECKFRONT_API_SECRET = process.env.CHECKFRONT_API_SECRET || 'add933b4539b93537600694efc27fd93274730b6f729a3edbbe5a655e0425091';
-
-const credentials = Buffer.from(`${CHECKFRONT_API_KEY}:${CHECKFRONT_API_SECRET}`).toString('base64');
-
-async function checkfrontRequest(endpoint) {
-    const url = `https://${CHECKFRONT_DOMAIN}/api/3.0${endpoint}`;
-    const response = await fetch(url, {
-          headers: { 'Authorization': `Basic ${credentials}`, 'Accept': 'application/json' }
-    });
-    return await response.json();
-}
+// api/check-booking.js
+const { checkfront, safeBooking } = require("../lib/checkfront");
+const { guard } = require("../lib/guard");
 
 module.exports = async (req, res) => {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-    if (req.method === 'OPTIONS') return res.status(200).end();
-    if (req.method !== 'POST') return res.status(405).json({ success: false, message: 'Use POST' });
+  // Handle CORS preflight
+  if (req.method === "OPTIONS") {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, x-internal-token");
+    return res.status(200).end();
+  }
 
-    try {
-          const { booking_id, email, phone } = { ...req.query, ...req.body };
-          if (!booking_id && !email && !phone) {
-                  return res.status(400).json({ success: false, message: 'Provide booking_id, email, or phone', speech: 'I need your booking ID, email, or phone to look up your booking.' });
-          }
+  res.setHeader("Access-Control-Allow-Origin", "*");
 
-      if (booking_id) {
-              const result = await checkfrontRequest(`/booking/${booking_id}`);
-              if (result.booking) {
-                        return res.status(200).json({ success: true, booking: result.booking, speech: `Found booking ${booking_id} for ${result.booking.customer?.name || 'customer'}.` });
-              }
-              return res.status(404).json({ success: false, speech: `No booking found with ID ${booking_id}.` });
+  // Auth check
+  if (!guard(req, res)) return;
+
+  // Allow both GET and POST
+  if (req.method !== "GET" && req.method !== "POST") {
+    return res.status(405).json({
+      ok: false,
+      code: "METHOD_NOT_ALLOWED",
+      speech: "Sorry, something went wrong. Can you try that again?"
+    });
+  }
+
+  try {
+    const {
+      booking_id,
+      customer_email,
+      customer_phone,
+      customer_name
+    } = { ...req.query, ...req.body };
+
+    let booking = null;
+
+    // Look up by booking ID first
+    if (booking_id) {
+      try {
+        const result = await checkfront(`/booking/${encodeURIComponent(booking_id)}`);
+        booking = result?.booking;
+      } catch (err) {
+        if (err.status !== 404) throw err;
       }
-
-      const params = new URLSearchParams();
-          if (email) params.append('customer_email', email);
-          if (phone) params.append('customer_phone', phone);
-          const result = await checkfrontRequest(`/booking?${params}`);
-
-      if (result.bookings && Object.keys(result.bookings).length > 0) {
-              const bookings = Object.values(result.bookings);
-              return res.status(200).json({ success: true, bookings, count: bookings.length, speech: `Found ${bookings.length} booking(s).` });
-      }
-          return res.status(404).json({ success: false, speech: 'No bookings found.' });
-    } catch (error) {
-          return res.status(500).json({ success: false, error: error.message, speech: 'Error looking up booking.' });
     }
+
+    // If no booking found by ID, try searching by customer info
+    if (!booking && (customer_email || customer_phone || customer_name)) {
+      const searchParams = {};
+      if (customer_email) searchParams.customer_email = customer_email;
+      if (customer_phone) searchParams.customer_phone = customer_phone;
+      if (customer_name) searchParams.customer_name = customer_name;
+
+      // Search recent bookings
+      const searchResult = await checkfront("/booking", {
+        query: {
+          ...searchParams,
+          limit: 5,
+          order_by: "start_date",
+          order_dir: "DESC"
+        }
+      });
+
+      if (searchResult?.bookings && Object.keys(searchResult.bookings).length > 0) {
+        // Get the most recent booking
+        const bookings = Object.values(searchResult.bookings);
+        booking = bookings[0];
+
+        // If multiple bookings, mention it
+        if (bookings.length > 1) {
+          return res.status(200).json({
+            ok: true,
+            multiple: true,
+            count: bookings.length,
+            bookings: bookings.slice(0, 3).map(safeBooking),
+            speech: `I found ${bookings.length} bookings under that name. The most recent one is for ${booking.items?.[0]?.name || "a service"} on ${booking.start_date}. Is that the one you're looking for?`
+          });
+        }
+      }
+    }
+
+    // No search criteria provided
+    if (!booking_id && !customer_email && !customer_phone && !customer_name) {
+      return res.status(400).json({
+        ok: false,
+        code: "MISSING_LOOKUP_INFO",
+        speech: "I can help look up a booking. Do you have a confirmation number, or would you like me to search by your name or email?",
+        fields_needed: ["booking_id", "customer_email", "customer_name"]
+      });
+    }
+
+    // Booking not found
+    if (!booking) {
+      return res.status(404).json({
+        ok: false,
+        code: "BOOKING_NOT_FOUND",
+        speech: "I couldn't find a booking with that information. Could you double-check and try again?"
+      });
+    }
+
+    // Format the booking details for voice
+    const itemName = booking.items?.[0]?.name || "your service";
+    const status = booking.status_name || booking.status || "confirmed";
+    const startDate = booking.start_date;
+    const total = booking.total;
+
+    let statusMessage = "";
+    if (status.toLowerCase() === "paid" || status.toLowerCase() === "confirmed") {
+      statusMessage = "and it's all confirmed";
+    } else if (status.toLowerCase().includes("cancel")) {
+      statusMessage = "but it looks like it was cancelled";
+    } else {
+      statusMessage = `and the status is ${status}`;
+    }
+
+    return res.status(200).json({
+      ok: true,
+      booking: safeBooking(booking),
+      speech: `I found your booking for ${itemName} on ${startDate}${total ? ` for $${total}` : ""}, ${statusMessage}. Is there anything you'd like to change?`
+    });
+
+  } catch (err) {
+    console.error("check-booking failed:", err.message, err.payload || "");
+
+    return res.status(500).json({
+      ok: false,
+      code: "INTERNAL_ERROR",
+      speech: "I had trouble looking that up. Could you try again?"
+    });
+  }
 };
