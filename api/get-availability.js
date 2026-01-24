@@ -1,7 +1,7 @@
 // api/get-availability.js
 const { checkfront, findItemsByName } = require("../lib/checkfront");
 const { guard } = require("../lib/guard");
-const { parseDate } = require("../lib/dates");
+const { parseDate } = require("../lib/dateUtils");
 
 module.exports = async (req, res) => {
   // Handle CORS preflight
