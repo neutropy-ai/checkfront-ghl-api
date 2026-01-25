@@ -35,18 +35,24 @@ module.exports = async (req, res) => {
 
     let booking = null;
 
+    console.log("[check-booking] Looking up booking:", { booking_id, customer_email, customer_phone, customer_name });
+
     // Look up by booking ID first
     if (booking_id) {
       try {
+        console.log("[check-booking] Searching by booking_id:", booking_id);
         const result = await checkfront(`/booking/${encodeURIComponent(booking_id)}`);
         booking = result?.booking;
+        console.log("[check-booking] Found by ID:", booking ? "yes" : "no");
       } catch (err) {
+        console.log("[check-booking] Booking ID lookup error:", err.status);
         if (err.status !== 404) throw err;
       }
     }
 
     // If no booking found by ID, try searching by customer info
     if (!booking && (customer_email || customer_phone || customer_name)) {
+      console.log("[check-booking] Searching by customer info");
       const searchParams = {};
       if (customer_email) searchParams.customer_email = customer_email;
       if (customer_phone) searchParams.customer_phone = customer_phone;
@@ -61,6 +67,8 @@ module.exports = async (req, res) => {
           order_dir: "DESC"
         }
       });
+
+      console.log("[check-booking] Search result:", searchResult?.bookings ? Object.keys(searchResult.bookings).length + " bookings" : "none");
 
       if (searchResult?.bookings && Object.keys(searchResult.bookings).length > 0) {
         // Get the most recent booking

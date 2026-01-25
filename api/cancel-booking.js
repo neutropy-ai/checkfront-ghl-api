@@ -37,9 +37,13 @@ module.exports = async (req, res) => {
       });
     }
 
+    console.log("[cancel-booking] Looking up booking:", booking_id);
+
     // 1) Fetch the booking to verify it exists
     const bookingResult = await checkfront(`/booking/${encodeURIComponent(booking_id)}`);
     const booking = bookingResult?.booking;
+
+    console.log("[cancel-booking] Booking lookup result:", booking ? "found" : "not found");
 
     if (!booking) {
       return res.status(404).json({
@@ -51,21 +55,25 @@ module.exports = async (req, res) => {
 
     // 2) Update status to cancelled
     const cancelStatus = process.env.CHECKFRONT_CANCEL_STATUS_ID || "VOID";
+    console.log("[cancel-booking] Setting status to:", cancelStatus);
 
-    await checkfront(`/booking/${encodeURIComponent(booking_id)}`, {
+    const cancelResult = await checkfront(`/booking/${encodeURIComponent(booking_id)}`, {
       method: "POST",
       form: {
         status_id: cancelStatus
       }
     });
+    console.log("[cancel-booking] Cancel result:", JSON.stringify(cancelResult).slice(0, 300));
 
     // 3) Add a note about the cancellation
+    console.log("[cancel-booking] Adding cancellation note");
     await checkfront(`/booking/${encodeURIComponent(booking_id)}/note`, {
       method: "POST",
       form: {
         body: reason ? `Cancelled via phone: ${reason}` : "Cancelled via phone"
       }
     });
+    console.log("[cancel-booking] Success - booking cancelled");
 
     const itemName = booking.items?.[0]?.name || "your booking";
 

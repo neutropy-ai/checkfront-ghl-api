@@ -1,6 +1,6 @@
 {
   "name": "checkfront-ghl-api",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "description": "Checkfront booking API for GoHighLevel Voice AI Custom Actions",
   "main": "api/index.js",
   "scripts": {

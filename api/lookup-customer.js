@@ -48,6 +48,8 @@ module.exports = async (req, res) => {
 
     const normalizedPhone = normalizePhone(searchPhone);
 
+    console.log("[lookup-customer] Searching for:", { phone: normalizedPhone, email: searchEmail });
+
     // Search bookings by customer phone or email
     // Checkfront API: /booking?customer_email=X or search in results
     const query = {};
@@ -71,6 +73,8 @@ module.exports = async (req, res) => {
     query.limit = 50;
 
     const result = await checkfront("/booking", { query });
+
+    console.log("[lookup-customer] Search returned:", result?.bookings ? Object.keys(result.bookings).length + " bookings" : "none");
 
     if (!result?.bookings) {
       return res.status(200).json({
@@ -96,6 +100,8 @@ module.exports = async (req, res) => {
         );
       });
     }
+
+    console.log("[lookup-customer] After phone filter:", matchedBookings.length, "bookings matched");
 
     if (matchedBookings.length === 0) {
       return res.status(200).json({
