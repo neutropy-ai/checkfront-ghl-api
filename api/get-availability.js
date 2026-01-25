@@ -116,13 +116,24 @@ module.exports = async (req, res) => {
       checkEndDate = `${endDay.getFullYear()}${String(endDay.getMonth() + 1).padStart(2, "0")}${String(endDay.getDate()).padStart(2, "0")}`;
     }
 
+    console.log("[get-availability] Checking availability:", {
+      item_id: resolvedItemId,
+      start_date: checkStartDate,
+      end_date: checkEndDate
+    });
+
     // Fetch item with availability
-    const item = await checkfront(`/item/${resolvedItemId}`, {
+    const result = await checkfront(`/item/${resolvedItemId}`, {
       query: {
         start_date: checkStartDate,
         end_date: checkEndDate
       }
     });
+
+    console.log("[get-availability] API response:", JSON.stringify(result).slice(0, 500));
+
+    // Handle the item from the response
+    const item = result?.item || result;
 
     if (!item) {
       return res.status(404).json({
@@ -136,13 +147,21 @@ module.exports = async (req, res) => {
     const availableDates = [];
     const unavailableDates = [];
 
-    if (item.calendar) {
-      for (const [dateStr, dayInfo] of Object.entries(item.calendar)) {
+    // Try different possible calendar locations in the response
+    const calendar = item.calendar || result.calendar || item.item?.calendar;
+
+    if (calendar) {
+      for (const [dateStr, dayInfo] of Object.entries(calendar)) {
+        // Format date for display (YYYYMMDD -> readable)
+        const formattedDate = formatDateForSpeech(dateStr);
+
         if (dayInfo.available && dayInfo.available > 0) {
           availableDates.push({
             date: dateStr,
+            formatted: formattedDate,
             available: dayInfo.available,
-            rate: dayInfo.rate
+            rate: dayInfo.rate,
+            slip: dayInfo.slip // Include SLIP for potential booking
           });
         } else {
           unavailableDates.push(dateStr);
@@ -152,14 +171,29 @@ module.exports = async (req, res) => {
 
     const itemName = itemInfo?.name || item.name || "that";
 
-    // Build speech response
+    // Helper to format dates for speech
+    function formatDateForSpeech(dateStr) {
+      // YYYYMMDD -> human readable
+      if (dateStr.length === 8) {
+        const year = dateStr.slice(0, 4);
+        const month = dateStr.slice(4, 6);
+        const day = dateStr.slice(6, 8);
+        const date = new Date(year, month - 1, day);
+        return date.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+      }
+      return dateStr;
+    }
+
+    // Build speech response using human-readable dates
     let speechResponse;
     if (availableDates.length === 0) {
-      speechResponse = `Unfortunately ${itemName} is fully booked from ${checkStartDate} to ${checkEndDate}. Want me to check some other dates?`;
+      const startFormatted = formatDateForSpeech(checkStartDate);
+      const endFormatted = formatDateForSpeech(checkEndDate);
+      speechResponse = `Unfortunately ${itemName} is fully booked from ${startFormatted} to ${endFormatted}. Want me to check some other dates?`;
     } else if (availableDates.length === 1) {
-      speechResponse = `Good news — ${itemName} is available on ${availableDates[0].date}. Would you like me to book that for you?`;
+      speechResponse = `Good news — ${itemName} is available on ${availableDates[0].formatted}. Would you like me to book that for you?`;
     } else {
-      const dateList = availableDates.slice(0, 3).map(d => d.date).join(", ");
+      const dateList = availableDates.slice(0, 3).map(d => d.formatted).join(", ");
       if (availableDates.length > 3) {
         speechResponse = `${itemName} has availability on ${dateList}, plus ${availableDates.length - 3} more dates. Which date works best for you?`;
       } else {

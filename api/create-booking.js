@@ -49,7 +49,6 @@ module.exports = async (req, res) => {
         itemInfo = exact;
         resolvedItemId = exact.id;
       } else if (matches.length > 0) {
-        // Multiple matches - ask for clarification
         const options = matches.slice(0, 3).map(m => m.name).join(", ");
         return res.status(400).json({
           ok: false,
@@ -88,6 +87,7 @@ module.exports = async (req, res) => {
 
     const parsedDate = parseDate(bookingDate, process.env.TIMEZONE);
     if (parsedDate.error) {
+      console.log("[create-booking] Date parse error:", parsedDate.error, "Input:", bookingDate);
       return res.status(400).json({
         ok: false,
         code: "INVALID_DATE",
@@ -114,54 +114,92 @@ module.exports = async (req, res) => {
       });
     }
 
-    // Get item details if we don't have them
-    if (!itemInfo) {
-      const itemResult = await checkfront(`/item/${resolvedItemId}`);
-      itemInfo = itemResult?.item;
-    }
+    console.log("[create-booking] Creating booking:", {
+      item_id: resolvedItemId,
+      date: parsedDate.dateStr,
+      customer_name,
+      customer_email,
+      customer_phone
+    });
 
-    const itemName = itemInfo?.name || "that";
-
-    // Step 1: Create a booking session
-    const sessionResult = await checkfront("/booking/session", {
-      method: "POST",
-      form: {
-        item_id: resolvedItemId,
-        start_date: parsedDate.dateStr,  // YYYYMMDD format
+    // Step 1: Get rated item with SLIP
+    // Checkfront requires a "rated" item query to get the SLIP token for booking
+    const ratedItem = await checkfront(`/item/${resolvedItemId}`, {
+      query: {
+        start_date: parsedDate.dateStr,
         end_date: parsedDate.dateStr,
-        qty: quantity
+        param: { qty: quantity }
       }
     });
 
+    console.log("[create-booking] Rated item response:", JSON.stringify(ratedItem).slice(0, 500));
+
+    // Check if item is available
+    if (!ratedItem?.item) {
+      return res.status(404).json({
+        ok: false,
+        code: "ITEM_NOT_FOUND",
+        speech: "I couldn't find that service. What would you like to book?"
+      });
+    }
+
+    const itemName = ratedItem.item.name || itemInfo?.name || "that service";
+
+    // Get the SLIP from the rated response
+    const slip = ratedItem.item?.slip || ratedItem.item?.rate?.slip;
+
+    if (!slip) {
+      console.log("[create-booking] No SLIP returned - item may not be available");
+      return res.status(400).json({
+        ok: false,
+        code: "NOT_AVAILABLE",
+        speech: `Unfortunately ${itemName} isn't available on ${parsedDate.formatted}. Would you like to try a different date?`
+      });
+    }
+
+    console.log("[create-booking] Got SLIP, creating session");
+
+    // Step 2: Create booking session with the SLIP
+    const sessionResult = await checkfront("/booking/session", {
+      method: "POST",
+      form: {
+        slip: slip
+      }
+    });
+
+    console.log("[create-booking] Session response:", JSON.stringify(sessionResult).slice(0, 500));
+
     if (!sessionResult?.booking?.session?.id) {
-      // Check if it's an availability issue
       if (sessionResult?.error || sessionResult?.request?.status === "ERROR") {
+        const errorMsg = sessionResult?.request?.error || sessionResult?.error || "Unknown error";
+        console.log("[create-booking] Session error:", errorMsg);
         return res.status(400).json({
           ok: false,
-          code: "NOT_AVAILABLE",
+          code: "SESSION_ERROR",
           speech: `Unfortunately ${itemName} isn't available on ${parsedDate.formatted}. Would you like to try a different date?`
         });
       }
-
       throw new Error("Failed to create booking session");
     }
 
     const sessionId = sessionResult.booking.session.id;
+    console.log("[create-booking] Session created:", sessionId);
 
-    // Step 2: Set customer details
-    await checkfront("/booking/session/form", {
+    // Step 3: Set customer form data
+    // Checkfront expects form fields as form[field_name]=value
+    const formResult = await checkfront("/booking/session", {
       method: "POST",
       form: {
         session_id: sessionId,
-        form: JSON.stringify({
-          customer_name: customer_name,
-          customer_email: customer_email || "",
-          customer_phone: customer_phone || ""
-        })
+        "form[customer_name]": customer_name,
+        "form[customer_email]": customer_email || "",
+        "form[customer_phone]": customer_phone || ""
       }
     });
 
-    // Step 3: Complete the booking
+    console.log("[create-booking] Form update response:", JSON.stringify(formResult).slice(0, 300));
+
+    // Step 4: Complete the booking
     const bookingResult = await checkfront("/booking/create", {
       method: "POST",
       form: {
@@ -169,8 +207,12 @@ module.exports = async (req, res) => {
       }
     });
 
+    console.log("[create-booking] Booking result:", JSON.stringify(bookingResult).slice(0, 500));
+
     if (!bookingResult?.booking) {
-      throw new Error("Booking creation failed");
+      const errorMsg = bookingResult?.request?.error || bookingResult?.error || "Unknown error";
+      console.log("[create-booking] Booking failed:", errorMsg);
+      throw new Error("Booking creation failed: " + errorMsg);
     }
 
     const booking = bookingResult.booking;
@@ -184,7 +226,7 @@ module.exports = async (req, res) => {
     });
 
   } catch (err) {
-    console.error("create-booking failed:", err.message, err.payload || "");
+    console.error("[create-booking] Error:", err.message, err.payload || "");
 
     return res.status(500).json({
       ok: false,
