@@ -47,9 +47,13 @@ module.exports = async (req, res) => {
       });
     }
 
+    console.log("[modify-booking] Looking up booking:", booking_id);
+
     // Fetch the existing booking
     const bookingResult = await checkfront(`/booking/${encodeURIComponent(booking_id)}`);
     const booking = bookingResult?.booking;
+
+    console.log("[modify-booking] Booking lookup result:", booking ? "found" : "not found");
 
     if (!booking) {
       return res.status(404).json({
@@ -105,20 +109,26 @@ module.exports = async (req, res) => {
       return res.status(400).json({
         ok: false,
         code: "NO_CHANGES",
-        speech: "What would you like to change about this booking? I can update the date, name, or contact information."
+        speech: "What would you like to change about this booking? I can update the name or contact information."
       });
     }
 
+    console.log("[modify-booking] Applying updates:", JSON.stringify(updates));
+
     // Apply updates if any
     if (Object.keys(updates).length > 0) {
-      await checkfront(`/booking/${encodeURIComponent(booking_id)}`, {
+      // Note: Date changes via Checkfront API may require voiding and rebooking
+      // Customer info updates should work directly
+      const updateResult = await checkfront(`/booking/${encodeURIComponent(booking_id)}`, {
         method: "POST",
         form: updates
       });
+      console.log("[modify-booking] Update result:", JSON.stringify(updateResult).slice(0, 500));
     }
 
     // Add note if provided
     if (notes) {
+      console.log("[modify-booking] Adding note to booking");
       await checkfront(`/booking/${encodeURIComponent(booking_id)}/note`, {
         method: "POST",
         form: {
@@ -128,8 +138,10 @@ module.exports = async (req, res) => {
     }
 
     // Fetch updated booking
+    console.log("[modify-booking] Fetching updated booking");
     const updatedResult = await checkfront(`/booking/${encodeURIComponent(booking_id)}`);
     const updatedBooking = updatedResult?.booking || booking;
+    console.log("[modify-booking] Success - booking updated");
 
     const changesSummary = changes.length > 0
       ? `I've updated the ${changes.join(" and ")}`

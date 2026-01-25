@@ -8,7 +8,7 @@ module.exports = async (req, res) => {
     return res.status(200).json({
           status: 'ok',
           service: 'Checkfront GHL Voice AI API',
-          version: '3.0.0',
+          version: '2.0.3',
           build: '2026-01-25-debug',
           auth_required: !!process.env.INTERNAL_TOKEN,
           endpoints: [
