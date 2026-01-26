@@ -59,17 +59,21 @@ module.exports = async (req, res) => {
         const has30Min = matchNames.some(n => n.includes("30 min") || n.includes("30min"));
         const has1Hour = matchNames.some(n => n.includes("1 hour") || n.includes("hour"));
 
-        if ((hasShared || hasPrivate) && (has30Min || has1Hour)) {
-          // Sauna-specific: ask about type and duration
-          speech = "Would you like a shared or private session? And would you prefer 30 minutes or a full hour?";
-        } else if (hasShared && hasPrivate) {
-          speech = "Would you prefer the shared or private option?";
+        // Ask ONE question at a time for natural conversation
+        if (hasShared && hasPrivate) {
+          // First ask shared vs private
+          speech = "Would you like a shared or private session?";
         } else if (has30Min && has1Hour) {
-          speech = "Would you like the 30 minute session or the full hour?";
+          // Then ask duration
+          speech = "Would you like 30 minutes or a full hour?";
         } else {
           // Generic: list top 3 options naturally
-          const options = matches.slice(0, 3).map(m => m.name).join(", or ");
-          speech = `I have a few options: ${options}. Which would you like?`;
+          const topOptions = matches.slice(0, 3).map(m => m.name);
+          if (topOptions.length === 2) {
+            speech = `Would you like the ${topOptions[0]} or the ${topOptions[1]}?`;
+          } else {
+            speech = `I have a few options. Would you like ${topOptions[0]}?`;
+          }
         }
 
         console.log("[get-availability] Multiple items found, returning clarification:", speech);
@@ -279,15 +283,15 @@ module.exports = async (req, res) => {
       }
     } else if (availableDates.length === 1) {
       const d = availableDates[0];
-      // Use just the day name for natural speech
+      // Use just the day name for natural speech - don't mention item name
       const dayName = d.formatted.split(",")[0]; // "Friday" from "Friday, January 31"
-      speechResponse = `${dayName} looks good! Would you like me to book that for you?`;
+      speechResponse = `That's available on ${dayName}. Would you like me to book it?`;
     } else {
       // List just day names for cleaner speech
       const dayNames = availableDates.slice(0, 3).map(d => d.formatted.split(",")[0]);
       const lastDay = dayNames.pop();
       const dayList = dayNames.length > 0 ? `${dayNames.join(", ")} or ${lastDay}` : lastDay;
-      speechResponse = `I have ${dayList} available. Which works best for you?`;
+      speechResponse = `That's available on ${dayList}. Which day works best?`;
     }
 
     console.log("[get-availability] Returning speech:", speechResponse);

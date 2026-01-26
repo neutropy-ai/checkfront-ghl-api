@@ -133,12 +133,12 @@ module.exports = async (req, res) => {
       });
     }
 
-    // Validate customer info
+    // Validate customer info - ask for ONE piece at a time
     if (!formattedName) {
       return res.status(400).json({
         ok: false,
         code: "MISSING_CUSTOMER_NAME",
-        speech: "I'll need your name for the booking. What name should I put it under?",
+        speech: "And what name should I put the booking under?",
         fields_needed: ["customer_name"]
       });
     }
@@ -147,8 +147,8 @@ module.exports = async (req, res) => {
       return res.status(400).json({
         ok: false,
         code: "MISSING_CONTACT",
-        speech: "I'll need a way to send you the confirmation. What's your email or phone number?",
-        fields_needed: ["customer_email", "customer_phone"]
+        speech: "And what's the best phone number to reach you on?",
+        fields_needed: ["customer_phone"]
       });
     }
 
@@ -256,12 +256,15 @@ module.exports = async (req, res) => {
 
     const booking = bookingResult.booking;
 
+    // Format date naturally for speech (just day name if within a week)
+    const dayName = parsedDate.formatted.split(",")[0] || parsedDate.formatted;
+
     return res.status(200).json({
       ok: true,
       booking_id: booking.booking_id || booking.id,
       code: booking.code,
       booking: safeBooking(booking),
-      speech: `Great! I've booked ${itemName} for ${formattedName} on ${parsedDate.formatted}. Your confirmation number is ${booking.code}. You'll receive a confirmation email shortly. Is there anything else?`
+      speech: `You're all set! I've booked that for ${dayName}. Your confirmation number is ${booking.code}. You'll get a confirmation email shortly. Anything else I can help with?`
     });
 
   } catch (err) {
