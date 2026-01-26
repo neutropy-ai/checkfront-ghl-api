@@ -89,7 +89,7 @@ module.exports = async (req, res) => {
             multiple: true,
             count: bookings.length,
             bookings: bookings.slice(0, 3).map(safeBooking),
-            speech: `I found ${bookings.length} bookings under that name. The most recent one is for ${booking.items?.[0]?.name || "a service"} on ${booking.start_date}. Is that the one you're looking for?`
+            speech: `Found ${bookings.length} bookings. Most recent is ${booking.items?.[0]?.name || "a booking"} on ${booking.start_date}. That one?`
           });
         }
       }
@@ -100,7 +100,7 @@ module.exports = async (req, res) => {
       return res.status(400).json({
         ok: false,
         code: "MISSING_LOOKUP_INFO",
-        speech: "I can help look up a booking. Do you have a confirmation number, or would you like me to search by your name or email?",
+        speech: "Sure! What's your booking reference?",
         fields_needed: ["booking_id", "customer_email", "customer_name"]
       });
     }
@@ -110,29 +110,32 @@ module.exports = async (req, res) => {
       return res.status(404).json({
         ok: false,
         code: "BOOKING_NOT_FOUND",
-        speech: "I couldn't find a booking with that information. Could you double-check and try again?"
+        speech: "Can't find that one. Want to try a different reference?"
       });
     }
 
-    // Format the booking details for voice
-    const itemName = booking.items?.[0]?.name || "your service";
-    const status = booking.status_name || booking.status || "confirmed";
+    // Format the booking details for voice - keep it SHORT
+    const itemName = booking.items?.[0]?.name || "your booking";
     const startDate = booking.start_date;
-    const total = booking.total;
+    const startTime = booking.start_time || booking.time;
 
-    let statusMessage = "";
-    if (status.toLowerCase() === "paid" || status.toLowerCase() === "confirmed") {
-      statusMessage = "and it's all confirmed";
-    } else if (status.toLowerCase().includes("cancel")) {
-      statusMessage = "but it looks like it was cancelled";
-    } else {
-      statusMessage = `and the status is ${status}`;
+    // Format date nicely if possible (YYYYMMDD -> "January 30th")
+    let dateStr = startDate;
+    if (startDate && startDate.length === 8) {
+      const d = new Date(startDate.slice(0,4), startDate.slice(4,6)-1, startDate.slice(6,8));
+      dateStr = d.toLocaleDateString("en-IE", { month: "long", day: "numeric" });
+    }
+
+    // Format time nicely if available
+    let timeStr = "";
+    if (startTime) {
+      timeStr = ` at ${startTime}`;
     }
 
     return res.status(200).json({
       ok: true,
       booking: safeBooking(booking),
-      speech: `I found your booking for ${itemName} on ${startDate}${total ? ` for $${total}` : ""}, ${statusMessage}. Is there anything you'd like to change?`
+      speech: `Found it! ${itemName}, ${dateStr}${timeStr}. Anything else?`
     });
 
   } catch (err) {

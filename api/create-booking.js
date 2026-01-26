@@ -191,7 +191,13 @@ module.exports = async (req, res) => {
       }
     });
 
-    console.log("[create-booking] Rated item response:", JSON.stringify(ratedItem).slice(0, 500));
+    console.log("[create-booking] Rated item response:", JSON.stringify(ratedItem).slice(0, 800));
+    console.log("[create-booking] Item keys:", ratedItem?.item ? Object.keys(ratedItem.item) : "no item");
+    console.log("[create-booking] SLIP locations:", {
+      direct: ratedItem?.item?.slip,
+      rate: ratedItem?.item?.rate?.slip,
+      calendar: ratedItem?.item?.calendar ? Object.keys(ratedItem.item.calendar) : "no calendar"
+    });
 
     // Check if item is available
     if (!ratedItem?.item) {
@@ -204,8 +210,15 @@ module.exports = async (req, res) => {
 
     const itemName = ratedItem.item.name || itemInfo?.name || "that service";
 
-    // Get the SLIP from the rated response
-    const slip = ratedItem.item?.slip || ratedItem.item?.rate?.slip;
+    // Get the SLIP from the rated response - check multiple locations
+    const calendar = ratedItem.item?.calendar;
+    const dateData = calendar?.[parsedDate.dateStr];
+    const slip = ratedItem.item?.slip ||
+                 ratedItem.item?.rate?.slip ||
+                 dateData?.slip ||
+                 dateData?.rate?.slip;
+
+    console.log("[create-booking] Date data for", parsedDate.dateStr, ":", JSON.stringify(dateData)?.slice(0, 300));
 
     if (!slip) {
       console.log("[create-booking] No SLIP returned - item may not be available");
