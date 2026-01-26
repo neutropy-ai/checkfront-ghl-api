@@ -1,3 +1,12 @@
+// Suppress url.parse deprecation warning (DEP0169) from transitive dependencies
+const originalEmit = process.emit;
+process.emit = function (event, warning) {
+  if (event === "warning" && warning?.code === "DEP0169") {
+    return false;
+  }
+  return originalEmit.apply(process, arguments);
+};
+
 const Sentry = require("@sentry/node");
 
 Sentry.init({
