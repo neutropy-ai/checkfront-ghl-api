@@ -59,22 +59,28 @@ module.exports = async (req, res) => {
     // Validate and format phone number
     let formattedPhone = customer_phone;
     if (customer_phone) {
-      const phoneResult = parsePhone(customer_phone, "IE");
+      const decodedPhone = decodeURIComponent(customer_phone);
+      const phoneResult = parsePhone(decodedPhone, "IE");
       if (phoneResult.valid) {
         formattedPhone = phoneResult.e164; // Use E.164 format for storage
         console.log("[create-booking] Formatted phone:", customer_phone, "->", formattedPhone);
+      } else {
+        formattedPhone = decodedPhone;
       }
     }
 
-    // Parse customer name
-    let formattedName = customer_name;
-    if (customer_name) {
-      const nameResult = parseName(customer_name);
+    // Parse and decode customer name (GHL may send URL-encoded)
+    let formattedName = customer_name ? decodeURIComponent(customer_name).trim() : null;
+    if (formattedName) {
+      const nameResult = parseName(formattedName);
       // Keep original if parsing doesn't improve it
       if (nameResult.firstName && nameResult.lastName) {
         formattedName = `${nameResult.firstName} ${nameResult.lastName}`;
       }
     }
+
+    // Decode email if URL-encoded
+    const formattedEmail = customer_email ? decodeURIComponent(customer_email).trim() : null;
 
     // Resolve item_id from item_name if needed
     let resolvedItemId = item_id;
@@ -153,7 +159,7 @@ module.exports = async (req, res) => {
       });
     }
 
-    if (!customer_email && !formattedPhone) {
+    if (!formattedEmail && !formattedPhone) {
       return res.status(400).json({
         ok: false,
         code: "MISSING_CONTACT",
@@ -166,7 +172,7 @@ module.exports = async (req, res) => {
       item_id: resolvedItemId,
       date: parsedDate.dateStr,
       customer_name: formattedName,
-      customer_email,
+      customer_email: formattedEmail,
       customer_phone: formattedPhone,
       quantity
     });
@@ -241,7 +247,7 @@ module.exports = async (req, res) => {
       form: {
         session_id: sessionId,
         "form[Name]": formattedName,
-        "form[Email]": customer_email || "",
+        "form[Email]": formattedEmail || "",
         "form[Phone]": formattedPhone || ""
       }
     });
