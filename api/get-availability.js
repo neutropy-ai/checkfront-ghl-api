@@ -72,6 +72,7 @@ module.exports = async (req, res) => {
           speech = `I have a few options: ${options}. Which would you like?`;
         }
 
+        console.log("[get-availability] Multiple items found, returning clarification:", speech);
         return res.status(200).json({
           ok: true,
           code: "MULTIPLE_ITEMS_FOUND",
@@ -289,6 +290,7 @@ module.exports = async (req, res) => {
       speechResponse = `I have ${dayList} available. Which works best for you?`;
     }
 
+    console.log("[get-availability] Returning speech:", speechResponse);
     return res.status(200).json({
       ok: true,
       item_id: resolvedItemId,
