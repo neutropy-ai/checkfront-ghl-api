@@ -1,3 +1,5 @@
+require("../instrument.js");
+const Sentry = require("@sentry/node");
 // api/check-booking.js
 const { checkfront, safeBooking } = require("../lib/checkfront");
 const { guard } = require("../lib/guard");
@@ -130,6 +132,7 @@ module.exports = async (req, res) => {
 
   } catch (err) {
     console.error("check-booking failed:", err.message, err.payload || "");
+    Sentry.captureException(err);
 
     return res.status(500).json({
       ok: false,
