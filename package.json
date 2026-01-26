@@ -8,7 +8,11 @@
   },
   "dependencies": {
     "@sentry/node": "^8.0.0",
-    "chrono-node": "^2.7.7"
+    "chrono-node": "^2.7.7",
+    "humanparser": "^2.7.0",
+    "libphonenumber-js": "^1.11.0",
+    "parse-duration": "^1.1.0",
+    "words-to-numbers": "^1.5.1"
   },
   "engines": {
     "node": ">=18.0.0"
