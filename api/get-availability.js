@@ -57,9 +57,11 @@ module.exports = async (req, res) => {
           speech: `I found a few options: ${options}. Which one were you asking about?`
         });
       } else {
+        console.log("[get-availability] No item found matching:", item_name);
         return res.status(404).json({
           ok: false,
           code: "ITEM_NOT_FOUND",
+          searched_for: item_name,
           speech: "I couldn't find that service. What would you like to check availability for?"
         });
       }

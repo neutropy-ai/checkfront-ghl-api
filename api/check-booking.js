@@ -3,6 +3,7 @@ const Sentry = require("@sentry/node");
 // api/check-booking.js
 const { checkfront, safeBooking } = require("../lib/checkfront");
 const { guard } = require("../lib/guard");
+const { parsePhone } = require("../lib/parseUtils");
 
 module.exports = async (req, res) => {
   // Handle CORS preflight
@@ -57,7 +58,11 @@ module.exports = async (req, res) => {
       console.log("[check-booking] Searching by customer info");
       const searchParams = {};
       if (customer_email) searchParams.customer_email = customer_email;
-      if (customer_phone) searchParams.customer_phone = customer_phone;
+      if (customer_phone) {
+        // Normalize phone for better matching
+        const phoneResult = parsePhone(customer_phone, "IE");
+        searchParams.customer_phone = phoneResult.valid ? phoneResult.e164 : customer_phone;
+      }
       if (customer_name) searchParams.customer_name = customer_name;
 
       // Search recent bookings

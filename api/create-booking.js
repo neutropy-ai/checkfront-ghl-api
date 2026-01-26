@@ -4,6 +4,7 @@ const Sentry = require("@sentry/node");
 const { checkfront, findItemsByName, safeBooking } = require("../lib/checkfront");
 const { guard } = require("../lib/guard");
 const { parseDate } = require("../lib/dateUtils");
+const { parseQuantity, parseName, parsePhone } = require("../lib/parseUtils");
 
 module.exports = async (req, res) => {
   // Handle CORS preflight
@@ -37,8 +38,43 @@ module.exports = async (req, res) => {
       customer_name,
       customer_email,
       customer_phone,
-      quantity = 1
+      quantity: rawQuantity,
+      guests, // Alternative field name for quantity
+      people  // Alternative field name for quantity
     } = { ...req.query, ...req.body };
+
+    // Parse quantity from natural language: "two people", "3 adults", etc.
+    const quantityInput = rawQuantity || guests || people;
+    let quantity = 1;
+    if (quantityInput) {
+      if (typeof quantityInput === "number") {
+        quantity = quantityInput;
+      } else {
+        const parsed = parseQuantity(String(quantityInput));
+        quantity = parsed.adults + parsed.children || 1;
+        console.log("[create-booking] Parsed quantity:", quantityInput, "->", quantity);
+      }
+    }
+
+    // Validate and format phone number
+    let formattedPhone = customer_phone;
+    if (customer_phone) {
+      const phoneResult = parsePhone(customer_phone, "IE");
+      if (phoneResult.valid) {
+        formattedPhone = phoneResult.e164; // Use E.164 format for storage
+        console.log("[create-booking] Formatted phone:", customer_phone, "->", formattedPhone);
+      }
+    }
+
+    // Parse customer name
+    let formattedName = customer_name;
+    if (customer_name) {
+      const nameResult = parseName(customer_name);
+      // Keep original if parsing doesn't improve it
+      if (nameResult.firstName && nameResult.lastName) {
+        formattedName = `${nameResult.firstName} ${nameResult.lastName}`;
+      }
+    }
 
     // Resolve item_id from item_name if needed
     let resolvedItemId = item_id;
@@ -98,7 +134,7 @@ module.exports = async (req, res) => {
     }
 
     // Validate customer info
-    if (!customer_name) {
+    if (!formattedName) {
       return res.status(400).json({
         ok: false,
         code: "MISSING_CUSTOMER_NAME",
@@ -107,7 +143,7 @@ module.exports = async (req, res) => {
       });
     }
 
-    if (!customer_email && !customer_phone) {
+    if (!customer_email && !formattedPhone) {
       return res.status(400).json({
         ok: false,
         code: "MISSING_CONTACT",
@@ -119,9 +155,10 @@ module.exports = async (req, res) => {
     console.log("[create-booking] Creating booking:", {
       item_id: resolvedItemId,
       date: parsedDate.dateStr,
-      customer_name,
+      customer_name: formattedName,
       customer_email,
-      customer_phone
+      customer_phone: formattedPhone,
+      quantity
     });
 
     // Step 1: Get rated item with SLIP
@@ -193,9 +230,9 @@ module.exports = async (req, res) => {
       method: "POST",
       form: {
         session_id: sessionId,
-        "form[Name]": customer_name,
+        "form[Name]": formattedName,
         "form[Email]": customer_email || "",
-        "form[Phone]": customer_phone || ""
+        "form[Phone]": formattedPhone || ""
       }
     });
 
@@ -224,7 +261,7 @@ module.exports = async (req, res) => {
       booking_id: booking.booking_id || booking.id,
       code: booking.code,
       booking: safeBooking(booking),
-      speech: `Great! I've booked ${itemName} for ${customer_name} on ${parsedDate.formatted}. Your confirmation number is ${booking.code}. You'll receive a confirmation email shortly. Is there anything else?`
+      speech: `Great! I've booked ${itemName} for ${formattedName} on ${parsedDate.formatted}. Your confirmation number is ${booking.code}. You'll receive a confirmation email shortly. Is there anything else?`
     });
 
   } catch (err) {

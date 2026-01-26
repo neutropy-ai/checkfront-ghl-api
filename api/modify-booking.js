@@ -4,6 +4,7 @@ const Sentry = require("@sentry/node");
 const { checkfront, safeBooking } = require("../lib/checkfront");
 const { guard } = require("../lib/guard");
 const { parseDate } = require("../lib/dateUtils");
+const { parseQuantity, parseName, parsePhone } = require("../lib/parseUtils");
 
 module.exports = async (req, res) => {
   // Handle CORS preflight
@@ -85,10 +86,14 @@ module.exports = async (req, res) => {
       changes.push(`date to ${parsedDate.formatted}`);
     }
 
-    // Handle customer info changes
+    // Handle customer info changes with voice-friendly parsing
     if (customer_name) {
-      updates.customer_name = customer_name;
-      changes.push(`name to ${customer_name}`);
+      const nameResult = parseName(customer_name);
+      const formattedName = (nameResult.firstName && nameResult.lastName)
+        ? `${nameResult.firstName} ${nameResult.lastName}`
+        : customer_name;
+      updates.customer_name = formattedName;
+      changes.push(`name to ${formattedName}`);
     }
 
     if (customer_email) {
@@ -97,13 +102,21 @@ module.exports = async (req, res) => {
     }
 
     if (customer_phone) {
-      updates.customer_phone = customer_phone;
+      const phoneResult = parsePhone(customer_phone, "IE");
+      const formattedPhone = phoneResult.valid ? phoneResult.e164 : customer_phone;
+      updates.customer_phone = formattedPhone;
       changes.push("phone number");
     }
 
     if (quantity) {
-      updates.qty = quantity;
-      changes.push(`quantity to ${quantity}`);
+      // Parse quantity from natural language: "two people", "3 guests"
+      let parsedQty = quantity;
+      if (typeof quantity === "string") {
+        const qtyResult = parseQuantity(quantity);
+        parsedQty = qtyResult.adults + qtyResult.children || parseInt(quantity) || 1;
+      }
+      updates.qty = parsedQty;
+      changes.push(`quantity to ${parsedQty}`);
     }
 
     // Check if there's anything to update
