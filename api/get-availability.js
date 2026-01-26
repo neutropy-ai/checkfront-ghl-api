@@ -295,13 +295,17 @@ module.exports = async (req, res) => {
       const d = availableDates[0];
       // Use just the day name for natural speech - don't mention item name
       const dayName = d.formatted.split(",")[0]; // "Friday" from "Friday, January 31"
-      speechResponse = `That's available on ${dayName}. Would you like me to book it?`;
+      // Include price if available
+      const priceInfo = d.rate ? ` for €${d.rate}` : "";
+      speechResponse = `That's available on ${dayName}${priceInfo}. Would you like me to book it?`;
     } else {
       // List just day names for cleaner speech
       const dayNames = availableDates.slice(0, 3).map(d => d.formatted.split(",")[0]);
       const lastDay = dayNames.pop();
       const dayList = dayNames.length > 0 ? `${dayNames.join(", ")} or ${lastDay}` : lastDay;
-      speechResponse = `That's available on ${dayList}. Which day works best?`;
+      // Include price from first available date if available
+      const priceInfo = availableDates[0]?.rate ? ` It's €${availableDates[0].rate}.` : "";
+      speechResponse = `That's available on ${dayList}.${priceInfo} Which day works best?`;
     }
 
     console.log("[get-availability] Returning speech:", speechResponse);
