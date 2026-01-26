@@ -179,11 +179,15 @@ module.exports = async (req, res) => {
 
     // Step 1: Get rated item with SLIP
     // Checkfront requires a "rated" item query to get the SLIP token for booking
+    // Different items use different param names (qty, adults, etc.) - pass both
     const ratedItem = await checkfront(`/item/${resolvedItemId}`, {
       query: {
         start_date: parsedDate.dateStr,
         end_date: parsedDate.dateStr,
-        param: { qty: quantity }
+        param: {
+          qty: quantity,
+          adults: quantity  // Some items use 'adults' instead of 'qty'
+        }
       }
     });
 
