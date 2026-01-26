@@ -211,50 +211,70 @@ module.exports = async (req, res) => {
       return dateStr;
     }
 
+    // Helper to format time from SLIP or time string
+    function formatTime(timeStr) {
+      if (!timeStr) return null;
+      // Handle various formats: "14:00", "1400", "2:00 PM"
+      const match = timeStr.match(/(\d{1,2}):?(\d{2})?/);
+      if (match) {
+        let hours = parseInt(match[1]);
+        const mins = match[2] ? parseInt(match[2]) : 0;
+        const ampm = hours >= 12 ? "pm" : "am";
+        if (hours > 12) hours -= 12;
+        if (hours === 0) hours = 12;
+        return mins > 0 ? `${hours}:${String(mins).padStart(2, "0")}${ampm}` : `${hours}${ampm}`;
+      }
+      return timeStr;
+    }
+
     // Build natural speech response
     let speechResponse;
     if (availableDates.length === 0) {
-      // No availability - try to find nearby alternatives
-      const requestedDate = formatDateForSpeech(checkStartDate).split(",")[0]; // Just day name
+      // No availability on requested date - find alternative time slots
+      const requestedDay = formatDateForSpeech(checkStartDate).split(",")[0];
 
-      // Search next 14 days for alternatives
-      const altStartDate = new Date();
-      const altEndDate = new Date();
-      altEndDate.setDate(altEndDate.getDate() + 14);
+      // Check if we have time slot data in the calendar
+      const dayData = calendar?.[checkStartDate];
+      const timeSlots = dayData?.times || dayData?.slots || [];
 
-      const altStartStr = `${altStartDate.getFullYear()}${String(altStartDate.getMonth() + 1).padStart(2, "0")}${String(altStartDate.getDate()).padStart(2, "0")}`;
-      const altEndStr = `${altEndDate.getFullYear()}${String(altEndDate.getMonth() + 1).padStart(2, "0")}${String(altEndDate.getDate()).padStart(2, "0")}`;
+      // Look for available slots on same day or nearby days
+      const altTimes = [];
 
-      try {
-        const altResult = await checkfront(`/item/${resolvedItemId}`, {
-          query: { start_date: altStartStr, end_date: altEndStr }
-        });
-
-        const altCalendar = altResult?.item?.calendar || altResult?.calendar;
-        const alternatives = [];
-
-        if (altCalendar) {
-          for (const [dateStr, dayInfo] of Object.entries(altCalendar)) {
-            if (dayInfo.available && dayInfo.available > 0 && dateStr !== checkStartDate) {
-              alternatives.push({
-                date: dateStr,
-                dayName: formatDateForSpeech(dateStr).split(",")[0]
-              });
-              if (alternatives.length >= 2) break;
+      // First check same day for available times
+      if (calendar) {
+        for (const [dateStr, dayInfo] of Object.entries(calendar)) {
+          const slots = dayInfo.times || dayInfo.slots || [];
+          if (Array.isArray(slots)) {
+            for (const slot of slots) {
+              if (slot.available > 0 || slot.status === "available") {
+                const time = formatTime(slot.time || slot.start_time);
+                if (time) {
+                  altTimes.push({
+                    date: dateStr,
+                    dayName: formatDateForSpeech(dateStr).split(",")[0],
+                    time
+                  });
+                }
+              }
+              if (altTimes.length >= 3) break;
             }
           }
+          if (altTimes.length >= 3) break;
         }
+      }
 
-        if (alternatives.length >= 2) {
-          speechResponse = `${requestedDate} is fully booked, but I have ${alternatives[0].dayName} and ${alternatives[1].dayName} available. Would either of those work?`;
-        } else if (alternatives.length === 1) {
-          speechResponse = `${requestedDate} is fully booked, but ${alternatives[0].dayName} is available. Would that work instead?`;
+      if (altTimes.length >= 2) {
+        const sameDay = altTimes.filter(t => t.date === checkStartDate);
+        if (sameDay.length >= 2) {
+          speechResponse = `That time is booked, but I have ${sameDay[0].time} and ${sameDay[1].time} available on ${requestedDay}. Would either work?`;
         } else {
-          speechResponse = `Unfortunately we're fully booked for the next couple of weeks. Would you like me to check further out?`;
+          speechResponse = `${requestedDay} is fully booked, but I have ${altTimes[0].dayName} at ${altTimes[0].time} or ${altTimes[1].dayName} at ${altTimes[1].time}. Would either work?`;
         }
-      } catch (altErr) {
-        console.log("[get-availability] Failed to find alternatives:", altErr.message);
-        speechResponse = `${requestedDate} is fully booked. Would you like me to check a different date?`;
+      } else if (altTimes.length === 1) {
+        speechResponse = `That's booked, but ${altTimes[0].dayName} at ${altTimes[0].time} is available. Would that work?`;
+      } else {
+        // Fallback - no time slots, just day availability
+        speechResponse = `${requestedDay} is fully booked. Would you like me to check a different day?`;
       }
     } else if (availableDates.length === 1) {
       const d = availableDates[0];
