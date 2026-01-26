@@ -49,14 +49,35 @@ module.exports = async (req, res) => {
         itemInfo = exact;
         resolvedItemId = exact.id;
       } else if (matches.length > 0) {
-        // Multiple matches - return 200 so GHL reads the speech (400 causes generic error)
-        const options = matches.slice(0, 3).map(m => m.name).join(", ");
+        // Multiple matches - build natural clarifying question
+        const matchNames = matches.map(m => m.name.toLowerCase());
+        let speech;
+
+        // Smart categorization for common scenarios
+        const hasShared = matchNames.some(n => n.includes("shared"));
+        const hasPrivate = matchNames.some(n => n.includes("private"));
+        const has30Min = matchNames.some(n => n.includes("30 min") || n.includes("30min"));
+        const has1Hour = matchNames.some(n => n.includes("1 hour") || n.includes("hour"));
+
+        if ((hasShared || hasPrivate) && (has30Min || has1Hour)) {
+          // Sauna-specific: ask about type and duration
+          speech = "Would you like a shared or private session? And would you prefer 30 minutes or a full hour?";
+        } else if (hasShared && hasPrivate) {
+          speech = "Would you prefer the shared or private option?";
+        } else if (has30Min && has1Hour) {
+          speech = "Would you like the 30 minute session or the full hour?";
+        } else {
+          // Generic: list top 3 options naturally
+          const options = matches.slice(0, 3).map(m => m.name).join(", or ");
+          speech = `I have a few options: ${options}. Which would you like?`;
+        }
+
         return res.status(200).json({
           ok: true,
           code: "MULTIPLE_ITEMS_FOUND",
           needs_clarification: true,
           matches: matches.slice(0, 5).map(m => ({ id: m.id, name: m.name })),
-          speech: `I found a few options: ${options}. Which one were you asking about?`
+          speech
         });
       } else {
         console.log("[get-availability] No item found matching:", item_name);
@@ -190,21 +211,22 @@ module.exports = async (req, res) => {
       return dateStr;
     }
 
-    // Build speech response using human-readable dates
+    // Build natural speech response
     let speechResponse;
     if (availableDates.length === 0) {
       const startFormatted = formatDateForSpeech(checkStartDate);
-      const endFormatted = formatDateForSpeech(checkEndDate);
-      speechResponse = `Unfortunately ${itemName} is fully booked from ${startFormatted} to ${endFormatted}. Want me to check some other dates?`;
+      speechResponse = `Unfortunately we're fully booked around ${startFormatted}. Would you like me to check a different date?`;
     } else if (availableDates.length === 1) {
-      speechResponse = `Good news — ${itemName} is available on ${availableDates[0].formatted}. Would you like me to book that for you?`;
+      const d = availableDates[0];
+      // Use just the day name for natural speech
+      const dayName = d.formatted.split(",")[0]; // "Friday" from "Friday, January 31"
+      speechResponse = `${dayName} looks good! Would you like me to book that for you?`;
     } else {
-      const dateList = availableDates.slice(0, 3).map(d => d.formatted).join(", ");
-      if (availableDates.length > 3) {
-        speechResponse = `${itemName} has availability on ${dateList}, plus ${availableDates.length - 3} more dates. Which date works best for you?`;
-      } else {
-        speechResponse = `${itemName} is available on ${dateList}. Which date would you prefer?`;
-      }
+      // List just day names for cleaner speech
+      const dayNames = availableDates.slice(0, 3).map(d => d.formatted.split(",")[0]);
+      const lastDay = dayNames.pop();
+      const dayList = dayNames.length > 0 ? `${dayNames.join(", ")} or ${lastDay}` : lastDay;
+      speechResponse = `I have ${dayList} available. Which works best for you?`;
     }
 
     return res.status(200).json({
