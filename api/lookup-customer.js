@@ -3,6 +3,7 @@ const Sentry = require("@sentry/node");
 // api/lookup-customer.js
 const { checkfront, safeBooking } = require("../lib/checkfront");
 const { guard } = require("../lib/guard");
+const { parsePhone } = require("../lib/parseUtils");
 
 module.exports = async (req, res) => {
   // Handle CORS preflight
@@ -42,15 +43,24 @@ module.exports = async (req, res) => {
       });
     }
 
-    // Normalize phone number - remove spaces, dashes, keep + prefix
+    // Normalize phone number using parsePhone for proper validation
     const normalizePhone = (p) => {
       if (!p) return null;
+      const result = parsePhone(p, "IE");
+      if (result.valid) {
+        return result.e164; // E.164 format: +353871234567
+      }
+      // Fallback: simple normalization
       return p.replace(/[\s\-\(\)]/g, "");
     };
 
     const normalizedPhone = normalizePhone(searchPhone);
 
-    console.log("[lookup-customer] Searching for:", { phone: normalizedPhone, email: searchEmail });
+    console.log("[lookup-customer] Searching for:", {
+      phone: normalizedPhone,
+      email: searchEmail,
+      originalPhone: searchPhone
+    });
 
     // Search bookings by customer phone or email
     // Checkfront API: /booking?customer_email=X or search in results
