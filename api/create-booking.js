@@ -1,3 +1,5 @@
+require("../instrument.js");
+const Sentry = require("@sentry/node");
 // api/create-booking.js
 const { checkfront, findItemsByName, safeBooking } = require("../lib/checkfront");
 const { guard } = require("../lib/guard");
@@ -191,9 +193,9 @@ module.exports = async (req, res) => {
       method: "POST",
       form: {
         session_id: sessionId,
-        "form[customer_name]": customer_name,
-        "form[customer_email]": customer_email || "",
-        "form[customer_phone]": customer_phone || ""
+        "form[Name]": customer_name,
+        "form[Email]": customer_email || "",
+        "form[Phone]": customer_phone || ""
       }
     });
 
@@ -227,6 +229,7 @@ module.exports = async (req, res) => {
 
   } catch (err) {
     console.error("[create-booking] Error:", err.message, err.payload || "");
+    Sentry.captureException(err);
 
     return res.status(500).json({
       ok: false,

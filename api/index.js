@@ -1,3 +1,6 @@
+require("../instrument.js");
+const Sentry = require("@sentry/node");
+
 module.exports = async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');

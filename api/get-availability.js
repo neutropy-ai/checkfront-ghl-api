@@ -1,3 +1,5 @@
+require("../instrument.js");
+const Sentry = require("@sentry/node");
 // api/get-availability.js
 const { checkfront, findItemsByName } = require("../lib/checkfront");
 const { guard } = require("../lib/guard");
@@ -215,6 +217,7 @@ module.exports = async (req, res) => {
 
   } catch (err) {
     console.error("get-availability failed:", err.message, err.payload || "");
+    Sentry.captureException(err);
 
     return res.status(500).json({
       ok: false,
