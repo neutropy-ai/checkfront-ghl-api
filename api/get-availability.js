@@ -214,8 +214,48 @@ module.exports = async (req, res) => {
     // Build natural speech response
     let speechResponse;
     if (availableDates.length === 0) {
-      const startFormatted = formatDateForSpeech(checkStartDate);
-      speechResponse = `Unfortunately we're fully booked around ${startFormatted}. Would you like me to check a different date?`;
+      // No availability - try to find nearby alternatives
+      const requestedDate = formatDateForSpeech(checkStartDate).split(",")[0]; // Just day name
+
+      // Search next 14 days for alternatives
+      const altStartDate = new Date();
+      const altEndDate = new Date();
+      altEndDate.setDate(altEndDate.getDate() + 14);
+
+      const altStartStr = `${altStartDate.getFullYear()}${String(altStartDate.getMonth() + 1).padStart(2, "0")}${String(altStartDate.getDate()).padStart(2, "0")}`;
+      const altEndStr = `${altEndDate.getFullYear()}${String(altEndDate.getMonth() + 1).padStart(2, "0")}${String(altEndDate.getDate()).padStart(2, "0")}`;
+
+      try {
+        const altResult = await checkfront(`/item/${resolvedItemId}`, {
+          query: { start_date: altStartStr, end_date: altEndStr }
+        });
+
+        const altCalendar = altResult?.item?.calendar || altResult?.calendar;
+        const alternatives = [];
+
+        if (altCalendar) {
+          for (const [dateStr, dayInfo] of Object.entries(altCalendar)) {
+            if (dayInfo.available && dayInfo.available > 0 && dateStr !== checkStartDate) {
+              alternatives.push({
+                date: dateStr,
+                dayName: formatDateForSpeech(dateStr).split(",")[0]
+              });
+              if (alternatives.length >= 2) break;
+            }
+          }
+        }
+
+        if (alternatives.length >= 2) {
+          speechResponse = `${requestedDate} is fully booked, but I have ${alternatives[0].dayName} and ${alternatives[1].dayName} available. Would either of those work?`;
+        } else if (alternatives.length === 1) {
+          speechResponse = `${requestedDate} is fully booked, but ${alternatives[0].dayName} is available. Would that work instead?`;
+        } else {
+          speechResponse = `Unfortunately we're fully booked for the next couple of weeks. Would you like me to check further out?`;
+        }
+      } catch (altErr) {
+        console.log("[get-availability] Failed to find alternatives:", altErr.message);
+        speechResponse = `${requestedDate} is fully booked. Would you like me to check a different date?`;
+      }
     } else if (availableDates.length === 1) {
       const d = availableDates[0];
       // Use just the day name for natural speech
