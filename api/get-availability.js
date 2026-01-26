@@ -49,10 +49,12 @@ module.exports = async (req, res) => {
         itemInfo = exact;
         resolvedItemId = exact.id;
       } else if (matches.length > 0) {
+        // Multiple matches - return 200 so GHL reads the speech (400 causes generic error)
         const options = matches.slice(0, 3).map(m => m.name).join(", ");
-        return res.status(400).json({
-          ok: false,
+        return res.status(200).json({
+          ok: true,
           code: "MULTIPLE_ITEMS_FOUND",
+          needs_clarification: true,
           matches: matches.slice(0, 5).map(m => ({ id: m.id, name: m.name })),
           speech: `I found a few options: ${options}. Which one were you asking about?`
         });
