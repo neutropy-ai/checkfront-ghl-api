@@ -43,11 +43,21 @@ module.exports = async (req, res) => {
     let itemInfo = null;
 
     if (!resolvedItemId && item_name) {
-      const { exact, matches } = await findItemsByName(item_name);
+      const { exact, matches, clarification } = await findItemsByName(item_name);
 
       if (exact) {
         itemInfo = exact;
         resolvedItemId = exact.id;
+      } else if (clarification) {
+        // Special case clarification (e.g., "30 min private doesn't exist")
+        console.log("[get-availability] Returning special clarification:", clarification);
+        return res.status(200).json({
+          ok: true,
+          code: "NEEDS_CLARIFICATION",
+          needs_clarification: true,
+          matches: matches.slice(0, 5).map(m => ({ id: m.id, name: m.name })),
+          speech: clarification
+        });
       } else if (matches.length > 0) {
         // Multiple matches - build natural clarifying question
         const matchNames = matches.map(m => m.name.toLowerCase());

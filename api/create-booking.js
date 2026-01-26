@@ -81,16 +81,26 @@ module.exports = async (req, res) => {
     let itemInfo = null;
 
     if (!resolvedItemId && item_name) {
-      const { exact, matches } = await findItemsByName(item_name);
+      const { exact, matches, clarification } = await findItemsByName(item_name);
 
       if (exact) {
         itemInfo = exact;
         resolvedItemId = exact.id;
+      } else if (clarification) {
+        // Special clarification (e.g., "30 min private doesn't exist")
+        return res.status(200).json({
+          ok: true,
+          code: "NEEDS_CLARIFICATION",
+          needs_clarification: true,
+          matches: matches.slice(0, 5).map(m => ({ id: m.id, name: m.name })),
+          speech: clarification
+        });
       } else if (matches.length > 0) {
         const options = matches.slice(0, 3).map(m => m.name).join(", ");
-        return res.status(400).json({
-          ok: false,
+        return res.status(200).json({
+          ok: true,
           code: "MULTIPLE_ITEMS_FOUND",
+          needs_clarification: true,
           matches: matches.slice(0, 5).map(m => ({ id: m.id, name: m.name })),
           speech: `I found a few options: ${options}. Which one did you mean?`
         });
