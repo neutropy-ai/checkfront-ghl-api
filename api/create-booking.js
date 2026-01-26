@@ -59,38 +59,54 @@ module.exports = async (req, res) => {
     // Validate and format phone number
     let formattedPhone = customer_phone;
     if (customer_phone) {
-      const phoneResult = parsePhone(customer_phone, "IE");
+      const decodedPhone = decodeURIComponent(customer_phone);
+      const phoneResult = parsePhone(decodedPhone, "IE");
       if (phoneResult.valid) {
         formattedPhone = phoneResult.e164; // Use E.164 format for storage
         console.log("[create-booking] Formatted phone:", customer_phone, "->", formattedPhone);
+      } else {
+        formattedPhone = decodedPhone;
       }
     }
 
-    // Parse customer name
-    let formattedName = customer_name;
-    if (customer_name) {
-      const nameResult = parseName(customer_name);
+    // Parse and decode customer name (GHL may send URL-encoded)
+    let formattedName = customer_name ? decodeURIComponent(customer_name).trim() : null;
+    if (formattedName) {
+      const nameResult = parseName(formattedName);
       // Keep original if parsing doesn't improve it
       if (nameResult.firstName && nameResult.lastName) {
         formattedName = `${nameResult.firstName} ${nameResult.lastName}`;
       }
     }
 
+    // Decode email if URL-encoded
+    const formattedEmail = customer_email ? decodeURIComponent(customer_email).trim() : null;
+
     // Resolve item_id from item_name if needed
     let resolvedItemId = item_id;
     let itemInfo = null;
 
     if (!resolvedItemId && item_name) {
-      const { exact, matches } = await findItemsByName(item_name);
+      const { exact, matches, clarification } = await findItemsByName(item_name);
 
       if (exact) {
         itemInfo = exact;
         resolvedItemId = exact.id;
+      } else if (clarification) {
+        // Special clarification (e.g., "30 min private doesn't exist")
+        return res.status(200).json({
+          ok: true,
+          code: "NEEDS_CLARIFICATION",
+          needs_clarification: true,
+          matches: matches.slice(0, 5).map(m => ({ id: m.id, name: m.name })),
+          speech: clarification
+        });
       } else if (matches.length > 0) {
         const options = matches.slice(0, 3).map(m => m.name).join(", ");
-        return res.status(400).json({
-          ok: false,
+        return res.status(200).json({
+          ok: true,
           code: "MULTIPLE_ITEMS_FOUND",
+          needs_clarification: true,
           matches: matches.slice(0, 5).map(m => ({ id: m.id, name: m.name })),
           speech: `I found a few options: ${options}. Which one did you mean?`
         });
@@ -133,22 +149,22 @@ module.exports = async (req, res) => {
       });
     }
 
-    // Validate customer info
+    // Validate customer info - ask for ONE piece at a time
     if (!formattedName) {
       return res.status(400).json({
         ok: false,
         code: "MISSING_CUSTOMER_NAME",
-        speech: "I'll need your name for the booking. What name should I put it under?",
+        speech: "And what name should I put the booking under?",
         fields_needed: ["customer_name"]
       });
     }
 
-    if (!customer_email && !formattedPhone) {
+    if (!formattedEmail && !formattedPhone) {
       return res.status(400).json({
         ok: false,
         code: "MISSING_CONTACT",
-        speech: "I'll need a way to send you the confirmation. What's your email or phone number?",
-        fields_needed: ["customer_email", "customer_phone"]
+        speech: "And what's the best phone number to reach you on?",
+        fields_needed: ["customer_phone"]
       });
     }
 
@@ -156,7 +172,7 @@ module.exports = async (req, res) => {
       item_id: resolvedItemId,
       date: parsedDate.dateStr,
       customer_name: formattedName,
-      customer_email,
+      customer_email: formattedEmail,
       customer_phone: formattedPhone,
       quantity
     });
@@ -231,7 +247,7 @@ module.exports = async (req, res) => {
       form: {
         session_id: sessionId,
         "form[Name]": formattedName,
-        "form[Email]": customer_email || "",
+        "form[Email]": formattedEmail || "",
         "form[Phone]": formattedPhone || ""
       }
     });
@@ -256,12 +272,15 @@ module.exports = async (req, res) => {
 
     const booking = bookingResult.booking;
 
+    // Format date naturally for speech (just day name if within a week)
+    const dayName = parsedDate.formatted.split(",")[0] || parsedDate.formatted;
+
     return res.status(200).json({
       ok: true,
       booking_id: booking.booking_id || booking.id,
       code: booking.code,
       booking: safeBooking(booking),
-      speech: `Great! I've booked ${itemName} for ${formattedName} on ${parsedDate.formatted}. Your confirmation number is ${booking.code}. You'll receive a confirmation email shortly. Is there anything else?`
+      speech: `You're all set! I've booked that for ${dayName}. Your confirmation number is ${booking.code}. You'll get a confirmation email shortly. Anything else I can help with?`
     });
 
   } catch (err) {

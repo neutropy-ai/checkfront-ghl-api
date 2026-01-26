@@ -39,10 +39,22 @@ module.exports = async (req, res) => {
       });
     }
 
-    console.log("[cancel-booking] Looking up booking:", booking_id);
+    // Validate booking_id format - reject obviously invalid IDs (like concatenated strings)
+    // Checkfront booking IDs are typically short codes like "FTNK-123456" or numeric IDs
+    const cleanBookingId = String(booking_id).trim();
+    if (cleanBookingId.length > 30 || cleanBookingId.includes(" ") || cleanBookingId.split("-").length > 3) {
+      console.log("[cancel-booking] Invalid booking_id format:", cleanBookingId);
+      return res.status(400).json({
+        ok: false,
+        code: "INVALID_BOOKING_ID",
+        speech: "That doesn't look like a valid booking reference. It should be something like FTNK-123456. Do you have your confirmation number or email?"
+      });
+    }
+
+    console.log("[cancel-booking] Looking up booking:", cleanBookingId);
 
     // 1) Fetch the booking to verify it exists
-    const bookingResult = await checkfront(`/booking/${encodeURIComponent(booking_id)}`);
+    const bookingResult = await checkfront(`/booking/${encodeURIComponent(cleanBookingId)}`);
     const booking = bookingResult?.booking;
 
     console.log("[cancel-booking] Booking lookup result:", booking ? "found" : "not found");
@@ -59,7 +71,7 @@ module.exports = async (req, res) => {
     const cancelStatus = process.env.CHECKFRONT_CANCEL_STATUS_ID || "VOID";
     console.log("[cancel-booking] Setting status to:", cancelStatus);
 
-    const cancelResult = await checkfront(`/booking/${encodeURIComponent(booking_id)}`, {
+    const cancelResult = await checkfront(`/booking/${encodeURIComponent(cleanBookingId)}`, {
       method: "POST",
       form: {
         status_id: cancelStatus
@@ -69,7 +81,7 @@ module.exports = async (req, res) => {
 
     // 3) Add a note about the cancellation
     console.log("[cancel-booking] Adding cancellation note");
-    await checkfront(`/booking/${encodeURIComponent(booking_id)}/note`, {
+    await checkfront(`/booking/${encodeURIComponent(cleanBookingId)}/note`, {
       method: "POST",
       form: {
         body: reason ? `Cancelled via phone: ${reason}` : "Cancelled via phone"
@@ -81,7 +93,7 @@ module.exports = async (req, res) => {
 
     return res.status(200).json({
       ok: true,
-      booking_id,
+      booking_id: cleanBookingId,
       cancelled: true,
       booking: safeBooking(booking),
       speech: `Done — I've cancelled ${itemName}. You should receive a confirmation email shortly. Is there anything else I can help with?`

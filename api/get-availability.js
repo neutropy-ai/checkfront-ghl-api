@@ -43,18 +43,56 @@ module.exports = async (req, res) => {
     let itemInfo = null;
 
     if (!resolvedItemId && item_name) {
-      const { exact, matches } = await findItemsByName(item_name);
+      const { exact, matches, clarification } = await findItemsByName(item_name);
 
       if (exact) {
         itemInfo = exact;
         resolvedItemId = exact.id;
-      } else if (matches.length > 0) {
-        const options = matches.slice(0, 3).map(m => m.name).join(", ");
-        return res.status(400).json({
-          ok: false,
-          code: "MULTIPLE_ITEMS_FOUND",
+      } else if (clarification) {
+        // Special case clarification (e.g., "30 min private doesn't exist")
+        console.log("[get-availability] Returning special clarification:", clarification);
+        return res.status(200).json({
+          ok: true,
+          code: "NEEDS_CLARIFICATION",
+          needs_clarification: true,
           matches: matches.slice(0, 5).map(m => ({ id: m.id, name: m.name })),
-          speech: `I found a few options: ${options}. Which one were you asking about?`
+          speech: clarification
+        });
+      } else if (matches.length > 0) {
+        // Multiple matches - build natural clarifying question
+        const matchNames = matches.map(m => m.name.toLowerCase());
+        let speech;
+
+        // Smart categorization for common scenarios
+        const hasShared = matchNames.some(n => n.includes("shared"));
+        const hasPrivate = matchNames.some(n => n.includes("private"));
+        const has30Min = matchNames.some(n => n.includes("30 min") || n.includes("30min"));
+        const has1Hour = matchNames.some(n => n.includes("1 hour") || n.includes("hour"));
+
+        // Ask ONE question at a time for natural conversation
+        if (hasShared && hasPrivate) {
+          // First ask shared vs private
+          speech = "Would you like a shared or private session?";
+        } else if (has30Min && has1Hour) {
+          // Then ask duration
+          speech = "Would you like 30 minutes or a full hour?";
+        } else {
+          // Generic: list top 3 options naturally
+          const topOptions = matches.slice(0, 3).map(m => m.name);
+          if (topOptions.length === 2) {
+            speech = `Would you like the ${topOptions[0]} or the ${topOptions[1]}?`;
+          } else {
+            speech = `I have a few options. Would you like ${topOptions[0]}?`;
+          }
+        }
+
+        console.log("[get-availability] Multiple items found, returning clarification:", speech);
+        return res.status(200).json({
+          ok: true,
+          code: "MULTIPLE_ITEMS_FOUND",
+          needs_clarification: true,
+          matches: matches.slice(0, 5).map(m => ({ id: m.id, name: m.name })),
+          speech
         });
       } else {
         console.log("[get-availability] No item found matching:", item_name);
@@ -188,23 +226,89 @@ module.exports = async (req, res) => {
       return dateStr;
     }
 
-    // Build speech response using human-readable dates
-    let speechResponse;
-    if (availableDates.length === 0) {
-      const startFormatted = formatDateForSpeech(checkStartDate);
-      const endFormatted = formatDateForSpeech(checkEndDate);
-      speechResponse = `Unfortunately ${itemName} is fully booked from ${startFormatted} to ${endFormatted}. Want me to check some other dates?`;
-    } else if (availableDates.length === 1) {
-      speechResponse = `Good news — ${itemName} is available on ${availableDates[0].formatted}. Would you like me to book that for you?`;
-    } else {
-      const dateList = availableDates.slice(0, 3).map(d => d.formatted).join(", ");
-      if (availableDates.length > 3) {
-        speechResponse = `${itemName} has availability on ${dateList}, plus ${availableDates.length - 3} more dates. Which date works best for you?`;
-      } else {
-        speechResponse = `${itemName} is available on ${dateList}. Which date would you prefer?`;
+    // Helper to format time from SLIP or time string
+    function formatTime(timeStr) {
+      if (!timeStr) return null;
+      // Handle various formats: "14:00", "1400", "2:00 PM"
+      const match = timeStr.match(/(\d{1,2}):?(\d{2})?/);
+      if (match) {
+        let hours = parseInt(match[1]);
+        const mins = match[2] ? parseInt(match[2]) : 0;
+        const ampm = hours >= 12 ? "pm" : "am";
+        if (hours > 12) hours -= 12;
+        if (hours === 0) hours = 12;
+        return mins > 0 ? `${hours}:${String(mins).padStart(2, "0")}${ampm}` : `${hours}${ampm}`;
       }
+      return timeStr;
     }
 
+    // Build natural speech response
+    let speechResponse;
+    if (availableDates.length === 0) {
+      // No availability on requested date - find alternative time slots
+      const requestedDay = formatDateForSpeech(checkStartDate).split(",")[0];
+
+      // Check if we have time slot data in the calendar
+      const dayData = calendar?.[checkStartDate];
+      const timeSlots = dayData?.times || dayData?.slots || [];
+
+      // Look for available slots on same day or nearby days
+      const altTimes = [];
+
+      // First check same day for available times
+      if (calendar) {
+        for (const [dateStr, dayInfo] of Object.entries(calendar)) {
+          const slots = dayInfo.times || dayInfo.slots || [];
+          if (Array.isArray(slots)) {
+            for (const slot of slots) {
+              if (slot.available > 0 || slot.status === "available") {
+                const time = formatTime(slot.time || slot.start_time);
+                if (time) {
+                  altTimes.push({
+                    date: dateStr,
+                    dayName: formatDateForSpeech(dateStr).split(",")[0],
+                    time
+                  });
+                }
+              }
+              if (altTimes.length >= 3) break;
+            }
+          }
+          if (altTimes.length >= 3) break;
+        }
+      }
+
+      if (altTimes.length >= 2) {
+        const sameDay = altTimes.filter(t => t.date === checkStartDate);
+        if (sameDay.length >= 2) {
+          speechResponse = `That time is booked, but I have ${sameDay[0].time} and ${sameDay[1].time} available on ${requestedDay}. Would either work?`;
+        } else {
+          speechResponse = `${requestedDay} is fully booked, but I have ${altTimes[0].dayName} at ${altTimes[0].time} or ${altTimes[1].dayName} at ${altTimes[1].time}. Would either work?`;
+        }
+      } else if (altTimes.length === 1) {
+        speechResponse = `That's booked, but ${altTimes[0].dayName} at ${altTimes[0].time} is available. Would that work?`;
+      } else {
+        // Fallback - no time slots, just day availability
+        speechResponse = `${requestedDay} is fully booked. Would you like me to check a different day?`;
+      }
+    } else if (availableDates.length === 1) {
+      const d = availableDates[0];
+      // Use just the day name for natural speech - don't mention item name
+      const dayName = d.formatted.split(",")[0]; // "Friday" from "Friday, January 31"
+      // Include price if available
+      const priceInfo = d.rate ? ` for €${d.rate}` : "";
+      speechResponse = `That's available on ${dayName}${priceInfo}. Would you like me to book it?`;
+    } else {
+      // List just day names for cleaner speech
+      const dayNames = availableDates.slice(0, 3).map(d => d.formatted.split(",")[0]);
+      const lastDay = dayNames.pop();
+      const dayList = dayNames.length > 0 ? `${dayNames.join(", ")} or ${lastDay}` : lastDay;
+      // Include price from first available date if available
+      const priceInfo = availableDates[0]?.rate ? ` It's €${availableDates[0].rate}.` : "";
+      speechResponse = `That's available on ${dayList}.${priceInfo} Which day works best?`;
+    }
+
+    console.log("[get-availability] Returning speech:", speechResponse);
     return res.status(200).json({
       ok: true,
       item_id: resolvedItemId,
